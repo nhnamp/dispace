@@ -1,0 +1,244 @@
+// Profiles.swift
+// The data model: display setups, saved profiles, live windows, and window matching.
+
+import AppKit
+
+/// The two display setups that Dispace knows. Each setup has one profile.
+enum SetupKind: String, Codable, CaseIterable {
+    case oneMonitor = "1-monitor"
+    case twoMonitor = "2-monitor"
+
+    var summary: String {
+        switch self {
+        case .oneMonitor: return "Built-in display only"
+        case .twoMonitor: return "Built-in display + external display"
+        }
+    }
+}
+
+enum DisplayRole: String, Codable {
+    case builtIn = "Built-in"
+    case external = "External"
+}
+
+/// The displays that are connected now.
+struct DisplaySetup: Equatable {
+    let builtIn: CGDirectDisplayID?
+    /// Only the first external display is used. Other external displays are ignored.
+    let external: CGDirectDisplayID?
+
+    static func current() -> DisplaySetup {
+        let ids = Displays.activeDisplayIDs()
+        return DisplaySetup(builtIn: ids.first { CGDisplayIsBuiltin($0) != 0 },
+                            external: ids.first { CGDisplayIsBuiltin($0) == 0 })
+    }
+
+    /// Nil when the built-in display is off (for example, the lid is closed).
+    var kind: SetupKind? {
+        guard builtIn != nil else { return nil }
+        return external == nil ? .oneMonitor : .twoMonitor
+    }
+
+    var roles: [DisplayRole] { kind == .twoMonitor ? [.builtIn, .external] : [.builtIn] }
+
+    func displayID(for role: DisplayRole) -> CGDirectDisplayID? {
+        role == .builtIn ? builtIn : external
+    }
+
+    func role(of displayID: CGDirectDisplayID) -> DisplayRole? {
+        if displayID == builtIn { return .builtIn }
+        if displayID == external { return .external }
+        return nil
+    }
+}
+
+struct SavedDisplay: Codable {
+    let role: DisplayRole
+    /// Number of normal desktops (full-screen app Spaces are not counted).
+    let spaceCount: Int
+}
+
+struct SavedWindow: Codable {
+    let windowID: UInt32
+    let bundleID: String
+    let appName: String
+    let title: String
+    let role: DisplayRole
+    /// Position of the Space among the normal desktops of the display, starting at 0.
+    let spaceIndex: Int
+    /// Frame relative to the top-left corner of the display.
+    let frame: CGRect
+}
+
+struct Profile: Codable {
+    let savedAt: Date
+    let displays: [SavedDisplay]
+    let windows: [SavedWindow]
+
+    /// Example: "Built-in: 1 Edge, Zalo · 2 Notes · 3 —"
+    func describe() -> String {
+        displays.map { display in
+            let spaces = (0..<display.spaceCount).map { index -> String in
+                let apps = windows.filter { $0.role == display.role && $0.spaceIndex == index }.map(\.appName)
+                let names = Array(NSOrderedSet(array: apps)) as? [String] ?? []
+                return "\(index + 1) " + (names.isEmpty ? "—" : names.joined(separator: ", "))
+            }
+            return "\(display.role.rawValue): " + spaces.joined(separator: " · ")
+        }.joined(separator: "\n")
+    }
+}
+
+/// A window that exists now.
+struct LiveWindow {
+    let windowID: UInt32
+    let pid: pid_t
+    let bundleID: String
+    let appName: String
+    let displayID: CGDirectDisplayID
+    let spaceID: UInt64
+    let spaceIndex: Int
+    let frame: CGRect
+}
+
+enum Snapshot {
+    /// Lists the normal windows of regular apps on all desktops of the setup's displays.
+    /// Windows on more than one Space (assigned to all desktops), minimized windows, and
+    /// windows in full-screen Spaces are not included.
+    static func liveWindows(setup: DisplaySetup, layout: [CGDirectDisplayID: DisplaySpaces]) -> [LiveWindow] {
+        var placements: [UInt32: [(displayID: CGDirectDisplayID, spaceID: UInt64, index: Int)]] = [:]
+        for role in setup.roles {
+            guard let displayID = setup.displayID(for: role), let display = layout[displayID] else { continue }
+            for (index, spaceID) in display.userSpaceIDs.enumerated() {
+                for windowID in SkyLight.windows(onSpace: spaceID) {
+                    placements[windowID, default: []].append((displayID, spaceID, index))
+                }
+            }
+        }
+
+        let info = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        var result: [LiveWindow] = []
+        for entry in info {
+            guard let number = entry[kCGWindowNumber as String] as? NSNumber,
+                  let places = placements[number.uint32Value], places.count == 1, let place = places.first,
+                  let pid = (entry[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value, pid != ownPID,
+                  let app = NSRunningApplication(processIdentifier: pid), app.activationPolicy == .regular,
+                  let boundsDictionary = entry[kCGWindowBounds as String] as? NSDictionary,
+                  let frame = CGRect(dictionaryRepresentation: boundsDictionary),
+                  frame.width >= 50, frame.height >= 50 else { continue }
+            result.append(LiveWindow(windowID: number.uint32Value, pid: pid,
+                                     bundleID: app.bundleIdentifier ?? app.localizedName ?? "pid \(pid)",
+                                     appName: app.localizedName ?? "?",
+                                     displayID: place.displayID, spaceID: place.spaceID, spaceIndex: place.index,
+                                     frame: frame))
+        }
+        return result.sorted { $0.windowID < $1.windowID }
+    }
+
+    /// Records the current arrangement as a profile.
+    static func capture(setup: DisplaySetup) -> Profile {
+        let layout = SkyLight.displaySpaces()
+        let displays = setup.roles.compactMap { role -> SavedDisplay? in
+            guard let displayID = setup.displayID(for: role), let display = layout[displayID] else { return nil }
+            return SavedDisplay(role: role, spaceCount: display.userSpaceIDs.count)
+        }
+        let live = liveWindows(setup: setup, layout: layout)
+        let elements = WindowAX.elements(for: live)
+        let windows = live.compactMap { window -> SavedWindow? in
+            guard let role = setup.role(of: window.displayID) else { return nil }
+            let origin = Displays.bounds(of: window.displayID).origin
+            let title = elements[window.windowID].map(WindowAX.title(of:)) ?? ""
+            return SavedWindow(windowID: window.windowID, bundleID: window.bundleID, appName: window.appName,
+                               title: title, role: role, spaceIndex: window.spaceIndex,
+                               frame: window.frame.offsetBy(dx: -origin.x, dy: -origin.y))
+        }
+        return Profile(savedAt: Date(), displays: displays, windows: windows)
+    }
+}
+
+enum Matcher {
+    /// Pairs saved windows with live windows, in this order:
+    /// 1. same window ID and app (the window still exists since the save);
+    /// 2. same app and same title;
+    /// 3. same app, in order of creation (after an app restart or a reboot).
+    /// Steps 2 and 3 apply only to saved windows that no longer exist.
+    /// Windows without a pair are not touched.
+    static func match(saved: [SavedWindow], live: [LiveWindow]) -> [(saved: SavedWindow, live: LiveWindow)] {
+        var free = live
+        var pairs: [(saved: SavedWindow, live: LiveWindow)] = []
+        var unmatched: [SavedWindow] = []
+
+        // Owners of all windows that exist now, also minimized, hidden, and full-screen ones.
+        var ownerOfWindow: [UInt32: pid_t] = [:]
+        for entry in CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? [] {
+            if let number = entry[kCGWindowNumber as String] as? NSNumber,
+               let pid = (entry[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value {
+                ownerOfWindow[number.uint32Value] = pid
+            }
+        }
+
+        for window in saved {
+            if let index = free.firstIndex(where: { $0.windowID == window.windowID && $0.bundleID == window.bundleID }) {
+                pairs.append((window, free.remove(at: index)))
+            } else if let pid = ownerOfWindow[window.windowID],
+                      NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == window.bundleID {
+                // The window still exists but is minimized, hidden, or full screen. Leave it,
+                // and do not give its place to another window of the same app.
+                continue
+            } else {
+                unmatched.append(window)
+            }
+        }
+        guard !unmatched.isEmpty else { return pairs }
+
+        // Titles are read only for apps that still have unmatched windows.
+        let candidates = free.filter { window in unmatched.contains { $0.bundleID == window.bundleID } }
+        let titles = WindowAX.elements(for: candidates).mapValues(WindowAX.title(of:))
+        var stillUnmatched: [SavedWindow] = []
+        for window in unmatched {
+            if !window.title.isEmpty,
+               let index = free.firstIndex(where: { $0.bundleID == window.bundleID && titles[$0.windowID] == window.title }) {
+                pairs.append((window, free.remove(at: index)))
+            } else {
+                stillUnmatched.append(window)
+            }
+        }
+        for window in stillUnmatched.sorted(by: { $0.windowID < $1.windowID }) {
+            if let index = free.firstIndex(where: { $0.bundleID == window.bundleID }) {
+                pairs.append((window, free.remove(at: index)))
+            }
+        }
+        return pairs
+    }
+}
+
+/// Saves profiles as JSON in ~/Library/Application Support/Dispace/profiles.json.
+enum ProfileStore {
+    private static var fileURL: URL {
+        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Dispace", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent("profiles.json")
+    }
+
+    static func load() -> [SetupKind: Profile] {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let data = try? Data(contentsOf: fileURL),
+              let stored = try? decoder.decode([String: Profile].self, from: data) else { return [:] }
+        var result: [SetupKind: Profile] = [:]
+        for (key, profile) in stored {
+            if let kind = SetupKind(rawValue: key) { result[kind] = profile }
+        }
+        return result
+    }
+
+    static func save(_ profiles: [SetupKind: Profile]) throws {
+        var stored: [String: Profile] = [:]
+        for (kind, profile) in profiles { stored[kind.rawValue] = profile }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(stored).write(to: fileURL, options: .atomic)
+    }
+}
