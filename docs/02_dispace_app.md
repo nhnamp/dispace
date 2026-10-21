@@ -27,7 +27,7 @@ With "Displays have separate Spaces" on, macOS merges the desktops of a disconne
 1. The display callback (`CGDisplayRegisterReconfigurationCallback`) fires several times. Dispace waits until the displays are stable for 2.5 seconds.
 2. Dispace selects the profile from the display types: built-in only gives "1-monitor", built-in and external gives "2-monitor". With the lid closed, no profile applies. A wake from sleep with the same setup does nothing.
 3. If a display has fewer desktops than the profile, Dispace adds desktops in Mission Control.
-4. Dispace matches saved windows to open windows. It moves each window to its desktop and sets its frame. It reads the result back and tries once more. A second pass after 2 seconds corrects windows that macOS moved late.
+4. Dispace matches saved windows to open windows. The rules depend on whether the app restarted after the save ([`05_window_matching.md`](05_window_matching.md)). It moves each window to its desktop and sets its frame. It reads the result back and tries once more. A second pass after 2 seconds corrects windows that macOS moved late.
 5. Dispace removes extra desktops at the end of each display if they are empty and not visible.
 
 Profiles are in `~/Library/Application Support/Dispace/profiles.json`. Desktops are stored by position (1, 2, 3 …), not by Space ID, because macOS creates new Space IDs when a display reconnects.

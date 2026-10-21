@@ -91,7 +91,8 @@ enum Switcher {
     private static func placeWindows(_ profile: Profile, setup: DisplaySetup,
                                      layout: [CGDirectDisplayID: DisplaySpaces]) -> PassResult {
         var result = PassResult()
-        let pairs = Matcher.match(saved: profile.windows, live: Snapshot.liveWindows(setup: setup, layout: layout))
+        let pairs = Matcher.match(saved: profile.windows, live: Snapshot.liveWindows(setup: setup, layout: layout),
+                                  savedAt: profile.savedAt)
         result.matched = pairs.count
 
         // Find the target desktop and frame of each window.

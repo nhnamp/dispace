@@ -157,36 +157,23 @@ enum Snapshot {
 }
 
 enum Matcher {
-    /// Pairs saved windows with live windows, in this order:
-    /// 1. same window ID and app (the window still exists since the save);
-    /// 2. same app and same title;
-    /// 3. same app, in order of creation (after an app restart or a reboot).
-    /// Steps 2 and 3 apply only to saved windows that no longer exist.
+    /// Pairs saved windows with live windows. The rules depend on when the app started:
+    /// - App running since the save: same window ID only. A saved window that is gone was
+    ///   closed, so its place is not given to another window of the app.
+    /// - App started after the save (logout, restart, or app restart): all window IDs are
+    ///   new, and WindowServer can give an old number to another window. Window IDs are
+    ///   ignored. The pair is the same title, else the next window of the app in order of creation.
     /// Windows without a pair are not touched.
-    static func match(saved: [SavedWindow], live: [LiveWindow]) -> [(saved: SavedWindow, live: LiveWindow)] {
+    static func match(saved: [SavedWindow], live: [LiveWindow], savedAt: Date) -> [(saved: SavedWindow, live: LiveWindow)] {
         var free = live
         var pairs: [(saved: SavedWindow, live: LiveWindow)] = []
         var unmatched: [SavedWindow] = []
 
-        // Owners of all windows that exist now, also minimized, hidden, and full-screen ones.
-        var ownerOfWindow: [UInt32: pid_t] = [:]
-        for entry in CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? [] {
-            if let number = entry[kCGWindowNumber as String] as? NSNumber,
-               let pid = (entry[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value {
-                ownerOfWindow[number.uint32Value] = pid
-            }
-        }
-
         for window in saved {
-            if let index = free.firstIndex(where: { $0.windowID == window.windowID && $0.bundleID == window.bundleID }) {
-                pairs.append((window, free.remove(at: index)))
-            } else if let pid = ownerOfWindow[window.windowID],
-                      NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == window.bundleID {
-                // The window still exists but is minimized, hidden, or full screen. Leave it,
-                // and do not give its place to another window of the same app.
-                continue
-            } else {
+            if startedAfter(savedAt, bundleID: window.bundleID) {
                 unmatched.append(window)
+            } else if let index = free.firstIndex(where: { $0.windowID == window.windowID && $0.bundleID == window.bundleID }) {
+                pairs.append((window, free.remove(at: index)))
             }
         }
         guard !unmatched.isEmpty else { return pairs }
@@ -209,6 +196,25 @@ enum Matcher {
             }
         }
         return pairs
+    }
+
+    /// Returns true when every running instance of the app started after the date.
+    /// An unknown start time counts as "before", so window IDs are trusted and nothing is guessed.
+    static func startedAfter(_ date: Date, bundleID: String) -> Bool {
+        let instances = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+        return !instances.isEmpty && instances.allSatisfy {
+            ($0.launchDate ?? processStart($0.processIdentifier) ?? .distantPast) > date
+        }
+    }
+
+    /// The start time of a process, from the kernel. macOS gives no `launchDate` for Finder.
+    private static func processStart(_ pid: pid_t) -> Date? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+        let start = info.kp_proc.p_un.__p_starttime
+        return Date(timeIntervalSince1970: Double(start.tv_sec) + Double(start.tv_usec) / 1_000_000)
     }
 }
 

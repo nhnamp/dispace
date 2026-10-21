@@ -102,6 +102,8 @@ Dispace uses no timers and no polling. It wakes only for display changes and for
 - A macOS update can remove the private functions. Dispace then shows a warning and does not move windows.
 - Dispace does not move full-screen app Spaces, minimized windows, hidden apps, or windows that show on all desktops.
 - Dispace does not open closed apps. New windows that are not in the profile stay where macOS puts them.
+- If you close a saved window and open a new window of the same app, Dispace does not move the new window. It treats the new window as a saved window only after the app restarts (logout, restart, or app restart). Then it pairs windows by title, and after that by order of creation. Save the profile again to include new windows.
+- Dispace does not apply a profile at login. It applies a profile at the next display change, or when you click **Apply Now**.
 - Dispace uses only the first external display.
 - With the lid closed (external display only), no profile applies.
 - The tests during development used the built-in display only. The automatic switch on connect and disconnect, and moves to the external display, were not tested during development.
