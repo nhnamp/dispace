@@ -70,8 +70,8 @@ cd dispace
 
 ## Daily use
 
-- **Menu bar icon:** shows the active profile and when it was saved. **Save Current Arrangement** saves the active profile in one click. The icon shows a check mark when the save is done.
-- **Window:** open Dispace from Raycast, Spotlight, or Finder. It shows the status, both profiles, **Apply Now**, the options, and recent activity. While the window is open, Dispace has a Dock icon and a Command-Tab entry. Close the window to hide them.
+- **Menu bar icon:** shows the active profile and when it was saved. **Save Current Arrangement** saves the active profile in one click. The icon shows a check mark when the save is done. **Open Dispace** opens the window.
+- **Window:** click **Open Dispace** in the menu bar menu, or open Dispace from Raycast, Spotlight, or Finder. It shows the status, both profiles, **Apply Now**, **Delete Profile…**, the options, and recent activity. While the window is open, Dispace has a Dock icon and a Command-Tab entry. Close the window to hide them.
 - **Quit:** **Quit Dispace** (or ⌘Q) stops automatic switching.
 
 Profiles are stored in `~/Library/Application Support/Dispace/profiles.json`. The log is `~/Library/Logs/Dispace.log`.

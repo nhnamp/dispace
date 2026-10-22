@@ -146,6 +146,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Deletes a saved profile. If the file cannot be written, the profile stays.
+    func deleteProfile(_ kind: SetupKind) {
+        guard !isBusy, let old = profiles[kind] else { return }
+        profiles[kind] = nil
+        do {
+            try ProfileStore.save(profiles)
+            Log.write("Deleted the \(kind.rawValue) profile.")
+        } catch {
+            profiles[kind] = old
+            Log.write("Could not delete the \(kind.rawValue) profile: \(error.localizedDescription)")
+        }
+        setupWindow.refresh()
+    }
+
     func applyNow(_ kind: SetupKind) {
         let setup = DisplaySetup.current()
         guard setup.kind == kind, let profile = profiles[kind] else { return }

@@ -1,5 +1,5 @@
 // MenuBar.swift
-// The menu bar icon. Its menu shows the active profile and a Save item.
+// The menu bar icon. Its menu shows the active profile, a Save item, and an item that opens the window.
 // The icon stays when the window is closed, because the app keeps running.
 
 import AppKit
@@ -22,6 +22,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     /// Builds the menu each time it opens, so it shows the current state without polling.
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        addProfileItems(to: menu)
+        menu.addItem(.separator())
+        let open = NSMenuItem(title: "Open Dispace", action: #selector(openWindow), keyEquivalent: "")
+        open.target = self
+        menu.addItem(open)
+    }
+
+    private func addProfileItems(to menu: NSMenu) {
         guard let kind = DisplaySetup.current().kind else {
             menu.addItem(Self.info("No profile: the built-in display is off"))
             return
@@ -40,6 +48,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         save.isEnabled = !app.isBusy
         menu.addItem(save)
     }
+
+    @objc private func openWindow() { app.showSetupWindow() }
 
     @objc private func save() {
         app.saveCurrentArrangement { [weak self] saved in

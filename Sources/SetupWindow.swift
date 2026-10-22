@@ -16,6 +16,7 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
     private var profileDetails: [SetupKind: NSTextField] = [:]
     private var saveButtons: [SetupKind: NSButton] = [:]
     private var applyButtons: [SetupKind: NSButton] = [:]
+    private var deleteButtons: [SetupKind: NSButton] = [:]
     private let autoSwitchBox = NSButton(checkboxWithTitle: "Switch profiles automatically when a display is connected or disconnected", target: nil, action: nil)
     private let loginBox = NSButton(checkboxWithTitle: "Open Dispace at login (needed for automatic switching)", target: nil, action: nil)
     private let activityLabel = SetupWindowController.label("", size: 11, color: .secondaryLabelColor)
@@ -91,6 +92,7 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
             }
             saveButtons[kind]?.isEnabled = isCurrent && !app.isBusy
             applyButtons[kind]?.isEnabled = isCurrent && !app.isBusy && app.profiles[kind] != nil && trusted && missing.isEmpty
+            deleteButtons[kind]?.isEnabled = !app.isBusy && app.profiles[kind] != nil
         }
 
         autoSwitchBox.state = app.autoSwitch ? .on : .off
@@ -123,6 +125,19 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
     @objc private func applyProfile(_ sender: NSButton) {
         guard let kind = kind(for: sender, in: applyButtons) else { return }
         app.applyNow(kind)
+    }
+
+    @objc private func deleteProfile(_ sender: NSButton) {
+        guard let kind = kind(for: sender, in: deleteButtons) else { return }
+        let alert = NSAlert()
+        alert.messageText = "Delete the saved \(kind.rawValue) profile?"
+        alert.informativeText = "Dispace forgets the desktops and windows of this profile. Your windows do not move. You cannot undo this."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons[0].hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        app.deleteProfile(kind)
     }
 
     @objc private func toggleAutoSwitch(_ sender: NSButton) { app.setAutoSwitch(sender.state == .on) }
@@ -162,11 +177,13 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
             let details = Self.label("", size: 11, color: .secondaryLabelColor)
             let save = NSButton(title: "Save Current Arrangement", target: self, action: #selector(save(_:)))
             let apply = NSButton(title: "Apply Now", target: self, action: #selector(applyProfile(_:)))
+            let delete = NSButton(title: "Delete Profile…", target: self, action: #selector(deleteProfile(_:)))
             profileTitles[kind] = rowTitle
             profileDetails[kind] = details
             saveButtons[kind] = save
             applyButtons[kind] = apply
-            let buttons = NSStackView(views: [save, apply])
+            deleteButtons[kind] = delete
+            let buttons = NSStackView(views: [save, apply, delete])
             buttons.spacing = 8
             profileRows.append(Self.column([rowTitle, details, buttons], spacing: 6))
         }
